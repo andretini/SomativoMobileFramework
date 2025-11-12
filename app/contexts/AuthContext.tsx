@@ -1,84 +1,95 @@
+// src/contexts/AuthContext.tsx
 import React, { createContext, FC, useContext, useEffect, useMemo, useState } from 'react';
-import { PROFILE_PLACEHOLDER, Storage } from '../constants';
 import { AuthContextType, User } from '../types';
+import { auth, db } from '../libs/firebase';
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updateProfile,
+  signOut,
+} from 'firebase/auth';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { PROFILE_PLACEHOLDER } from '../constants';
 
-const AuthContext = createContext<AuthContextType | null>(null);
+const Ctx = createContext<AuthContextType | null>(null);
 export const useAuth = () => {
-    const context = useContext(AuthContext);
-    if (!context) {
-        throw new Error('useAuth must be used within an AuthProvider');
-    }
-    return context;
+  const c = useContext(Ctx);
+  if (!c) throw new Error('useAuth must be used within an AuthProvider');
+  return c;
 };
 
-export const AuthProvider: FC<{ children: React.ReactNode }> = ({ children }) => {
+const toUser = async (fbUser: any): Promise<User> => {
+  const ref = doc(db, 'users', fbUser.uid);
+  const snap = await getDoc(ref);
+  const extra = snap.exists() ? snap.data() : {};
+  return {
+    id: fbUser.uid,
+    name: fbUser.displayName ?? extra.name ?? '',
+    email: fbUser.email ?? '',
+    password: '', // do not store password in state
+    profilePicUri: fbUser.photoURL ?? extra.profilePicUri ?? PROFILE_PLACEHOLDER,
+  };
+};
+
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const getUsersFromStorage = async (): Promise<User[]> => {
-    const usersJson = await Storage.getItem('users');
-    return usersJson ? JSON.parse(usersJson) : [];
-  };
-
-  const saveUsersToStorage = async (users: User[]): Promise<void> => {
-    await Storage.setItem('users', JSON.stringify(users));
-  };
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (fbUser) => {
+      setIsLoading(true);
+      if (fbUser) setCurrentUser(await toUser(fbUser));
+      else setCurrentUser(null);
+      setIsLoading(false);
+    });
+    return unsub;
+  }, []);
 
   const login: AuthContextType['login'] = async (email, password) => {
-    const users = await getUsersFromStorage();
-    const user = users.find(
-      (u) => u.email.toLowerCase() === email.toLowerCase() && u.password === password
-    );
-
-    if (user) {
+    try {
+      const cred = await signInWithEmailAndPassword(auth, email, password);
+      const user = await toUser(cred.user);
       setCurrentUser(user);
       return { success: true, user };
+    } catch (e: any) {
+      return { success: false, message: e.message || 'E-mail ou senha inválidos.' };
     }
-    return { success: false, message: 'E-mail ou senha inválidos.' };
   };
 
   const register: AuthContextType['register'] = async (name, email, password, profilePicUri) => {
-    if (!name || !email || !password || !profilePicUri) {
-      return { success: false, message: 'Todos os campos são obrigatórios.' };
+    try {
+      const { user } = await createUserWithEmailAndPassword(auth, email, password);
+
+      await updateProfile(user, {
+        displayName: name,
+        photoURL: profilePicUri || PROFILE_PLACEHOLDER,
+      });
+
+      await setDoc(doc(db, 'users', user.uid), {
+        name,
+        email,
+        profilePicUri: profilePicUri || PROFILE_PLACEHOLDER,
+        createdAt: Date.now(),
+      });
+
+      const mapped = await toUser(user);
+      setCurrentUser(mapped);
+      return { success: true, user: mapped };
+    } catch (e: any) {
+      return { success: false, message: e.message || 'Falha no cadastro.' };
     }
-    const users = await getUsersFromStorage();
-    const existingUser = users.find((u) => u.email.toLowerCase() === email.toLowerCase());
-
-    if (existingUser) {
-      return { success: false, message: 'Este e-mail já está cadastrado.' };
-    }
-
-    const newUser: User = {
-      id: Date.now().toString(),
-      name,
-      email,
-      password,
-      profilePicUri: profilePicUri || PROFILE_PLACEHOLDER,
-    };
-
-    await saveUsersToStorage([...users, newUser]);
-    setCurrentUser(newUser);
-    return { success: true, user: newUser };
   };
 
-  const logout: AuthContextType['logout'] = () => {
+  const logout: AuthContextType['logout'] = async () => {
+    await signOut(auth);
     setCurrentUser(null);
   };
-  
-  useEffect(() => {
-    setIsLoading(false);
-  }, []);
 
-  const value = useMemo<AuthContextType>(
-    () => ({
-      currentUser,
-      login,
-      register,
-      logout,
-      isLoading,
-    }),
+  const value = useMemo(
+    () => ({ currentUser, login, register, logout, isLoading }),
     [currentUser, isLoading]
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 };
