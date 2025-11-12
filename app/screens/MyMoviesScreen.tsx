@@ -1,4 +1,4 @@
-import React, { FC } from 'react';
+import { FC } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import Button from '../components/Button';
 import MovieItem from '../components/MovieItem';
