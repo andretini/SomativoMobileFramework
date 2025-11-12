@@ -1,24 +1,90 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import 'react-native-reanimated';
+import React, { FC, useEffect, useState } from 'react';
+import { ActivityIndicator, View } from 'react-native';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { MovieProvider } from './contexts/MovieContext';
+import BottomNav from './navigation/BottomNav';
+import LoginScreen from './screens/LoginScreen';
+import MovieDetailScreen from './screens/MovieDetailScreen';
+import MyMoviesScreen from './screens/MyMoviesScreen';
+import ProfileScreen from './screens/ProfileScreen';
+import RegisterScreen from './screens/RegisterScreen';
+import SearchScreen from './screens/SearchScreen';
+import { styles } from './styles';
+import { MovieDetails, ScreenName, UserMovie } from './types';
 
-import { useColorScheme } from '@/hooks/use-color-scheme';
+const App: FC = () => {
+  const { currentUser, isLoading } = useAuth();
+  
+  const [currentScreen, setCurrentScreen] = useState<ScreenName>('Login');
+  const [selectedMovie, setSelectedMovie] = useState<MovieDetails | UserMovie | null>(null);
 
-export const unstable_settings = {
-  anchor: '(tabs)',
-};
+  useEffect(() => {
+    if (isLoading) return;
 
-export default function RootLayout() {
-  const colorScheme = useColorScheme();
+    if (currentUser && (currentScreen === 'Login' || currentScreen === 'Register')) {
+      setCurrentScreen('Search');
+    } else if (!currentUser && currentScreen !== 'Register') {
+      setCurrentScreen('Login');
+    }
+  }, [currentUser, isLoading, currentScreen]);
+
+  const navigate = (screenName: ScreenName) => {
+    setCurrentScreen(screenName);
+  };
+
+  const renderScreen = () => {
+    if (isLoading) {
+      return (
+        <View style={styles.container}>
+            <ActivityIndicator size="large" color="#3b82f6" />
+        </View>
+      )
+    }
+
+    if (!currentUser) {
+      switch (currentScreen) {
+        case 'Register':
+          return <RegisterScreen onNavigate={navigate} />;
+        case 'Login':
+        default:
+          return <LoginScreen onNavigate={navigate} />;
+      }
+    }
+
+    switch (currentScreen) {
+      case 'Search':
+        return <SearchScreen onNavigate={navigate} onSelectMovie={setSelectedMovie} />;
+      case 'Details':
+        // Assertiva de tipo para garantir que selectedMovie não é null
+        if (!selectedMovie) return <SearchScreen onNavigate={navigate} onSelectMovie={setSelectedMovie} />; 
+        return <MovieDetailScreen movie={selectedMovie} onNavigate={navigate} />;
+      case 'MyMovies':
+        return <MyMoviesScreen onNavigate={navigate} onSelectMovie={setSelectedMovie} />;
+      case 'Profile':
+        return <ProfileScreen onNavigate={navigate} />;
+      default:
+        return <SearchScreen onNavigate={navigate} onSelectMovie={setSelectedMovie} />;
+    }
+  };
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-      </Stack>
-      <StatusBar style="auto" />
-    </ThemeProvider>
+    <View style={styles.appContainer}>
+      {renderScreen()}
+      {currentUser && (
+        <BottomNav currentScreen={currentScreen} onNavigate={navigate} />
+      )}
+    </View>
+  );
+};
+
+const AppWrapper: FC = () => {
+  return (
+    <AuthProvider>
+      <MovieProvider>
+        <App />
+      </MovieProvider>
+    </AuthProvider>
   );
 }
+
+export default AppWrapper;
